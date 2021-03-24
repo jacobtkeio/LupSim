@@ -33,102 +33,131 @@
 # OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #
 
-#
-# To make spim, type:
-#
-#   make spim
-#
-# To verify spim works, type:
-#
-#   make test
-#
+# Avoid builtin rules and variables
+MAKEFLAGS += -rR
 
-.SUFFIXES:
-.SUFFIXES: .cpp .o
-
-#
-# The following parameters must be set for the target machine:
-#
-#
-
+# =================== BUILD PARAMETERS ==================== #
 # Path for directory that contains the source of the CPU code:
-CPU_DIR = ../CPU
+CPU_DIR := ../CPU
 VPATH = src:$(CPU_DIR)
 
 # Path of directory that contains SPIM tests:
-TEST_DIR = ../Tests
+TEST_DIR := ../Tests
 
 # Path of directory that contains documentation:
-DOC_DIR = ../Documentation
-
-
+DOC_DIR := ../Documentation
 
 # Full path for the parent directory of all installed files:
-PREFIX = /usr
+PREFIX := /usr
 
 # Full path for the directory that will hold the executable files:
-BIN_DIR = $(PREFIX)/bin
+BIN_DIR := $(PREFIX)/bin
 
 # Full path for the directory that will hold the exception handler:
-EXCEPTION_DIR = $(PREFIX)/share/spim
+EXCEPTION_DIR := $(PREFIX)/share/spim
 
 # Full path for the directory that will hold the man files:
-MAN_DIR = $(PREFIX)/share/man/man1
-
-
+MAN_DIR := $(PREFIX)/share/man/man1
 
 # SPIM needs flex's -I flag since the scanner is used interactively.
 # You can set the -8 flag so that funny characters do not hang the scanner.
-MYLEX = flex
-LEXFLAGS += -I -8 -o lex.yy.cpp
+LEX := flex
+LFLAGS := -I -8 -o lex.yy.c
 
-YACC=bison
-YFLAGS += -d --defines=parser_yacc.h --output=parser_yacc.cpp -p yy
+YACC := bison
+YFLAGS := -d --defines=parser_yacc.h --output=parser_yacc.c -p yy
 
 
 # Size of the segments when spim starts up (data segment must be >= 64K).
 # (These sizes are fine for most users since SPIM dynamically expands
 # the memory as necessary.)
-MEM_SIZES = -DTEXT_SIZE=65536 -DDATA_SIZE=131072 -DK_TEXT_SIZE=65536
+MEM_SIZES := -DTEXT_SIZE=65536 -DDATA_SIZE=131072 -DK_TEXT_SIZE=65536
 
+# Name of target executable
+SPIM := spim
 
-#
-# End of parameters
-#
+# =================== END BUILD PARAMETERS ==================== #
 
+all: $(SPIM)
 
-
-DEFINES = $(MEM_SIZES) -DDEFAULT_EXCEPTION_HANDLER="\"$(EXCEPTION_DIR)/exceptions.s\""
-
-# Uncomment to test the functions for encoding/decoding binary instructions:
-#DEFINES += -DTEST_ASM
-
-CXX = g++
-CXXFLAGS += -I. -I$(CPU_DIR) $(DEFINES) -O -g -Wall -pedantic -Wextra -Wunused -Wno-write-strings -x c++
-YCFLAGS +=
-LDFLAGS += -lm
+CXX 	:= g++
+DEFINES := $(MEM_SIZES) -DDEFAULT_EXCEPTION_HANDLER="\"$(EXCEPTION_DIR)/exceptions.s\""
+CPPFLAGS := -I. -I$(CPU_DIR) $(DEFINES) -O -g -Wall -pedantic -Wextra -Wunused -Wno-write-strings -x c++ -MMD
+LDFLAGS := -lm
 CSH = bash
 
-# lex.yy.cpp is usually compiled with -O to speed it up.
+# Objects
+OBJS := \
+    spim.o \
+    parser_yacc.o \
+    lex.yy.o \
+    $(CPU_DIR)/spim-utils.o \
+    $(CPU_DIR)/run.o \
+    $(CPU_DIR)/mem.o \
+    $(CPU_DIR)/inst.o \
+    $(CPU_DIR)/data.o \
+    $(CPU_DIR)/sym-tbl.o \
+    $(CPU_DIR)/syscall.o \
+    $(CPU_DIR)/display-utils.o \
+    $(CPU_DIR)/string-stream.o
 
-LEXCFLAGS += -O $(CXXFLAGS)
+# Dependency mangement
+DEPS := $(patsubst %.o,%.d,$(OBJS))
+-include $(DEPS)
+
+# The SPIM application requires the parser to have been generated
+# This dependency cannot be automatically deduced with `-MMD`
+spim.o: parser_yacc.h
 
 
+# Don't print the commands unless explicitly requested with `make V=1`
+ifneq ($(V),1)
+Q = @
+endif
 
-OBJS = spim.o spim-utils.o run.o mem.o inst.o data.o sym-tbl.o parser_yacc.o lex.yy.o \
-       syscall.o display-utils.o string-stream.o
+# Main rule for building target executable
+$(SPIM): $(OBJS)
+	@echo "LD	 $@"
+	$(Q)$(CXX) $(OBJS) $(LDFLAGS) -o $@
+
+# Generic rule for compiling C files
+%.o: %.c
+	@echo "CC	 $@"
+	$(Q)$(CXX) $(CPPFLAGS) -c -o $@ $<
 
 
-spim:   $(OBJS)
-	$(CXX) -g $(OBJS) $(LDFLAGS) -o $@
+# Generic rule for compiling C++ files
+%.o: %.cpp
+	@echo "CXX	 $@"
+	$(Q)$(CXX) $(CPPFLAGS) -c -o $@ $<
 
+# Specific rules to generate parser and lexer
+parser_yacc.h: parser_yacc.c
 
-#
+parser_yacc.c: $(CPU_DIR)/parser.y
+	@echo "YACC	 $@"
+	$(Q)$(YACC) $(YFLAGS) $(CPU_DIR)/parser.y
 
-#
-# Test spim with a torture test:
-#
+lex.yy.c: $(CPU_DIR)/scanner.l
+	@echo "LEX	 $@"
+	$(Q)$(LEX) $(LFLAGS) $(CPU_DIR)/scanner.l
 
+.PHONY: clean install install-man splint
+clean:
+	@echo "CLEAN	 ."
+	$(Q)rm -f $(SPIM) $(OBJS) $(DEPS) parser_yacc.* lex.yy.* tags
+
+install: spim
+	$(Q)install -d $(DESTDIR)$(BIN_DIR)
+	$(Q)install spim $(DESTDIR)$(BIN_DIR)/spim
+	$(Q)install -d $(DESTDIR)$(EXCEPTION_DIR)
+	$(Q)install -m 0444 $(CPU_DIR)/exceptions.s $(DESTDIR)$(EXCEPTION_DIR)/exceptions.s
+
+install-man:
+	$(Q)install -d $(DESTDIR)$(MAN_DIR)
+	$(Q)install -m 0444 $(DOC_DIR)/spim.man $(DESTDIR)$(MAN_DIR)/spim.1
+
+# Tests
 test:	spim
 	@echo
 	@echo "Testing tt.bare.s:"
@@ -138,13 +167,13 @@ test:	spim
 
 	@echo
 	@echo "Testing tt.core.s:"
-	$(CSH) -c "./spim -ef $(CPU_DIR)/exceptions.s -file $(TEST_DIR)/tt.core.s < $(TEST_DIR)/tt.in >& test.out"
+	$(Q)$(CSH) -c "./spim -ef $(CPU_DIR)/exceptions.s -file $(TEST_DIR)/tt.core.s < $(TEST_DIR)/tt.in >& test.out"
 	@tail -2 test.out
 	@echo
 
 	@echo
 	@echo "Testing tt.le.s:"
-	$(CSH) -c "./spim -ef $(CPU_DIR)/exceptions.s -file $(TEST_DIR)/tt.le.s  >& test.out"
+	$(Q)$(CSH) -c "./spim -ef $(CPU_DIR)/exceptions.s -file $(TEST_DIR)/tt.le.s  >& test.out"
 	@tail -2 test.out
 	@echo
 	@echo
@@ -155,172 +184,17 @@ test:	spim
 test_bare: spim
 	@echo
 	@echo "Testing tt.alu.bare.s:"
-	$(CSH) -c "./spim -bare -noexception -file $(TEST_DIR)/tt.alu.bare.s >& test.out"
+	$(Q)$(CSH) -c "./spim -bare -noexception -file $(TEST_DIR)/tt.alu.bare.s >& test.out"
 	@tail -2 test.out
 	@echo
 
 	@echo
 	@echo "Testing tt.fpt.bare.s:"
-	$(CSH) -c "./spim -bare -noexception -file $(TEST_DIR)/tt.fpu.bare.s >& test.out"
+	$(Q)$(CSH) -c "./spim -bare -noexception -file $(TEST_DIR)/tt.fpu.bare.s >& test.out"
 	@tail -2 test.out
 	@echo
 	@echo
 
-#
-
-TAGS:	*.cpp *.h *.l *.y
-	etags *.l *.y *.cpp *.h
-
-
-clean:
-	rm -f spim spim.exe *.o TAGS test.out lex.yy.cpp parser_yacc.cpp parser_yacc.h y.output
-
-install: spim
-	install -d $(DESTDIR)$(BIN_DIR)
-	install spim $(DESTDIR)$(BIN_DIR)/spim
-	install -d $(DESTDIR)$(EXCEPTION_DIR)
-	install -m 0444 $(CPU_DIR)/exceptions.s $(DESTDIR)$(EXCEPTION_DIR)/exceptions.s
-
-install-man:
-	install -d $(DESTDIR)$(MAN_DIR)
-	install -m 0444 $(DOC_DIR)/spim.man $(DESTDIR)$(MAN_DIR)/spim.1
-
-splint: spim
-	splint -weak -preproc -warnposix +matchanyintegral spim.cpp parser_yacc.cpp lex.yy.cpp
-
-
-.PHONY: test test_bare clean install install-man splint
-
-#
-# Dependences not handled well by makedepend:
-#
-
-
-parser_yacc.h: parser_yacc.cpp
-
-parser_yacc.cpp: $(CPU_DIR)/parser.y
-	$(YACC) $(YFLAGS) $(CPU_DIR)/parser.y
-
-parser_yacc.o: parser_yacc.cpp
-	$(CXX) $(CXXFLAGS) $(YCFLAGS) -c parser_yacc.cpp
-
-
-lex.yy.cpp: $(CPU_DIR)/scanner.l
-	$(MYLEX) $(LEXFLAGS) $(CPU_DIR)/scanner.l
-
-lex.yy.o: lex.yy.cpp
-	$(CXX) $(LEXCFLAGS) -c lex.yy.cpp
-
-
-#
-# DO NOT DELETE THIS LINE -- make depend depends on it.
-
-data.o: $(CPU_DIR)/spim.h
-data.o: $(CPU_DIR)/string-stream.h
-data.o: $(CPU_DIR)/spim-utils.h
-data.o: $(CPU_DIR)/inst.h
-data.o: $(CPU_DIR)/reg.h
-data.o: $(CPU_DIR)/mem.h
-data.o: $(CPU_DIR)/sym-tbl.h
-data.o: $(CPU_DIR)/parser.h
-data.o: $(CPU_DIR)/run.h
-data.o: $(CPU_DIR)/data.h
-display-utils.o: $(CPU_DIR)/spim.h
-display-utils.o: $(CPU_DIR)/string-stream.h
-display-utils.o: $(CPU_DIR)/spim-utils.h
-display-utils.o: $(CPU_DIR)/inst.h
-display-utils.o: $(CPU_DIR)/data.h
-display-utils.o: $(CPU_DIR)/reg.h
-display-utils.o: $(CPU_DIR)/mem.h
-display-utils.o: $(CPU_DIR)/run.h
-display-utils.o: $(CPU_DIR)/sym-tbl.h
-dump_ops.o: $(CPU_DIR)/op.h
-inst.o: $(CPU_DIR)/spim.h
-inst.o: $(CPU_DIR)/string-stream.h
-inst.o: $(CPU_DIR)/spim-utils.h
-inst.o: $(CPU_DIR)/inst.h
-inst.o: $(CPU_DIR)/reg.h
-inst.o: $(CPU_DIR)/mem.h
-inst.o: $(CPU_DIR)/sym-tbl.h
-inst.o: $(CPU_DIR)/parser.h
-inst.o: $(CPU_DIR)/scanner.h
-inst.o: parser_yacc.h
-inst.o: $(CPU_DIR)/data.h
-inst.o: $(CPU_DIR)/op.h
-mem.o: $(CPU_DIR)/spim.h
-mem.o: $(CPU_DIR)/string-stream.h
-mem.o: $(CPU_DIR)/spim-utils.h
-mem.o: $(CPU_DIR)/inst.h
-mem.o: $(CPU_DIR)/reg.h
-mem.o: $(CPU_DIR)/mem.h
-run.o: $(CPU_DIR)/spim.h
-run.o: $(CPU_DIR)/string-stream.h
-run.o: $(CPU_DIR)/spim-utils.h
-run.o: $(CPU_DIR)/inst.h
-run.o: $(CPU_DIR)/reg.h
-run.o: $(CPU_DIR)/mem.h
-run.o: $(CPU_DIR)/sym-tbl.h
-run.o: parser_yacc.h
-run.o: $(CPU_DIR)/syscall.h
-run.o: $(CPU_DIR)/run.h
-spim-utils.o: $(CPU_DIR)/spim.h
-spim-utils.o: $(CPU_DIR)/string-stream.h
-spim-utils.o: $(CPU_DIR)/spim-utils.h
-spim-utils.o: $(CPU_DIR)/inst.h
-spim-utils.o: $(CPU_DIR)/data.h
-spim-utils.o: $(CPU_DIR)/reg.h
-spim-utils.o: $(CPU_DIR)/mem.h
-spim-utils.o: $(CPU_DIR)/scanner.h
-spim-utils.o: $(CPU_DIR)/parser.h
-spim-utils.o: parser_yacc.h
-spim-utils.o: $(CPU_DIR)/run.h
-spim-utils.o: $(CPU_DIR)/sym-tbl.h
-string-stream.o: $(CPU_DIR)/spim.h
-string-stream.o: $(CPU_DIR)/string-stream.h
-sym-tbl.o: $(CPU_DIR)/spim.h
-sym-tbl.o: $(CPU_DIR)/string-stream.h
-sym-tbl.o: $(CPU_DIR)/spim-utils.h
-sym-tbl.o: $(CPU_DIR)/inst.h
-sym-tbl.o: $(CPU_DIR)/reg.h
-sym-tbl.o: $(CPU_DIR)/mem.h
-sym-tbl.o: $(CPU_DIR)/data.h
-sym-tbl.o: $(CPU_DIR)/parser.h
-sym-tbl.o: $(CPU_DIR)/sym-tbl.h
-sym-tbl.o: parser_yacc.h
-syscall.o: $(CPU_DIR)/spim.h
-syscall.o: $(CPU_DIR)/string-stream.h
-syscall.o: $(CPU_DIR)/inst.h
-syscall.o: $(CPU_DIR)/reg.h
-syscall.o: $(CPU_DIR)/mem.h
-syscall.o: $(CPU_DIR)/sym-tbl.h
-syscall.o: $(CPU_DIR)/syscall.h
-lex.yy.o: $(CPU_DIR)/spim.h
-lex.yy.o: $(CPU_DIR)/string-stream.h
-lex.yy.o: $(CPU_DIR)/spim-utils.h
-lex.yy.o: $(CPU_DIR)/inst.h
-lex.yy.o: $(CPU_DIR)/reg.h
-lex.yy.o: $(CPU_DIR)/sym-tbl.h
-lex.yy.o: $(CPU_DIR)/parser.h
-lex.yy.o: $(CPU_DIR)/scanner.h
-lex.yy.o: parser_yacc.h
-lex.yy.o: $(CPU_DIR)/op.h
-spim.o: $(CPU_DIR)/spim.h
-spim.o: $(CPU_DIR)/string-stream.h
-spim.o: $(CPU_DIR)/spim-utils.h
-spim.o: $(CPU_DIR)/inst.h
-spim.o: $(CPU_DIR)/reg.h
-spim.o: $(CPU_DIR)/mem.h
-spim.o: $(CPU_DIR)/parser.h
-spim.o: $(CPU_DIR)/sym-tbl.h
-spim.o: $(CPU_DIR)/scanner.h
-spim.o: parser_yacc.h
-parser_yacc.o: $(CPU_DIR)/spim.h
-parser_yacc.o: $(CPU_DIR)/string-stream.h
-parser_yacc.o: $(CPU_DIR)/spim-utils.h
-parser_yacc.o: $(CPU_DIR)/inst.h
-parser_yacc.o: $(CPU_DIR)/reg.h
-parser_yacc.o: $(CPU_DIR)/mem.h
-parser_yacc.o: $(CPU_DIR)/sym-tbl.h
-parser_yacc.o: $(CPU_DIR)/data.h
-parser_yacc.o: $(CPU_DIR)/scanner.h
-parser_yacc.o: $(CPU_DIR)/parser.h
+# Generate an index of the source code for editor integration
+tags: *.cpp *.h
+	ctags --append=yes $?
