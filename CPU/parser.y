@@ -437,6 +437,7 @@
 %token Y_WORD_DIR
 
 %{
+#include <stdbool.h>
 #include <stdio.h>
 
 #include "spim.h"
