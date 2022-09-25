@@ -1,3 +1,15 @@
+This repo is forked from gitlab.com/luplab/lupsim and is a solution to the following issue: https://gitlab.com/luplab/lupsim/-/issues/2
+Since the gitlab page has no description, here is how the project was advertised to students at UC Davis:
+
+`spim` is an old MIPS simulator written in the 90s which had its moment of fame in education throughout the late 90s and 2000s (e.g., it was featured in the famous Hennessy and Patterson textbook).
+The goal of this project is to fork `spim` and change its internal engine from MIPS to RISC-V, in order to give it a new life for the 2020s!
+
+Following is the README file from that repo.
+
+
+
+
+
                         README FILE FOR SPIM, XSPIM, PCSPIM, and QTSPIM
                         ===============================================
 
